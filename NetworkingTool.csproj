@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Console subsystem disabled: this is a WinExe so the tray app shows no console window.
+         CLI modes (install/uninstall) attach to the parent console when present and also
+         surface results via MessageBox, so feedback works in every launch scenario. -->
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- Produce MyNetworkTool.exe (matches the documented command names) while keeping the
+         Visual Studio project / namespaces named NetworkingTool. -->
+    <AssemblyName>MyNetworkTool</AssemblyName>
+    <RootNamespace>NetworkingTool</RootNamespace>
+
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <!-- Custom icon: embedded into the PE so Explorer / taskbar / Alt-Tab show it. The same
+         icon is also embedded as a managed resource below so the tray can load crisp per-size
+         frames at runtime (NotifyIcon + window icon). -->
+    <ApplicationIcon>icon.ico</ApplicationIcon>
+
+    <!-- Product version. Read at runtime to decide whether a launched build is newer than the
+         installed copy (auto-update on default launch). Bump on each release. -->
+    <Version>1.1.0.0</Version>
+    <FileVersion>1.1.0.0</FileVersion>
+
+    <Platforms>AnyCPU;x64</Platforms>
+
+    <!-- Single-file publish friendly defaults. RID / SelfContained are supplied on the
+         publish command line (see README) so normal `dotnet build` stays fast. -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Brings in Microsoft.Extensions.Hosting + Windows Service lifetime integration
+         (UseWindowsService / AddWindowsService) and EventLog logging. -->
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="9.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The app icon, embedded as a managed resource. AppIcon.Load() reads it by this logical
+         name to pick the frame matching the requested size (tray = small, window = large). -->
+    <EmbeddedResource Include="icon.ico" LogicalName="NetworkingTool.icon.ico" />
+  </ItemGroup>
+
+</Project>
