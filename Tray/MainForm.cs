@@ -37,6 +37,7 @@ public sealed class MainForm : Form
     private readonly ComboBox _presets = new();
     private readonly Button _applyPreset = new();
     private readonly Button _resetProxy = new();
+    private readonly TextBox _proxyStatus = new();
 
     private readonly TextBox _output = new();
 
@@ -65,6 +66,7 @@ public sealed class MainForm : Form
         {
             await RefreshAdaptersAsync();
             await RefreshPresetsAsync();
+            await RefreshProxyStatusAsync();
         };
     }
 
@@ -227,6 +229,22 @@ public sealed class MainForm : Form
         _resetProxy.Click += OnResetProxy;
         y += 38;
 
+        var proxyStatusLabel = new Label
+        {
+            Text = "Current proxy (machine)",
+            Location = new Point(left, y),
+            Size = new Size(width, 18),
+            Font = new Font(Font, FontStyle.Bold)
+        };
+        y += 22;
+
+        _proxyStatus.Multiline = true;
+        _proxyStatus.ReadOnly = true;
+        _proxyStatus.Location = new Point(left, y);
+        _proxyStatus.Size = new Size(width, 42);
+        _proxyStatus.Text = "Loading current proxy status…";
+        y += 48;
+
         // --- Output log (fills the remaining space at the bottom) ---
         var outputLabel = new Label
         {
@@ -272,6 +290,7 @@ public sealed class MainForm : Form
             dnsLabel, _dns, dnsHint,
             _applyStatic, _enableDhcp, _profilePrivate, _profilePublic,
             proxyLabel, _presets, _applyPreset, _resetProxy,
+            proxyStatusLabel, _proxyStatus,
             outputLabel, _output,
             _statusStrip // docked controls added last
         });
@@ -409,6 +428,21 @@ public sealed class MainForm : Form
         catch (Exception ex)
         {
             AppendLog(IpcResponse.Fail("Refresh presets failed: " + ex.Message));
+        }
+    });
+
+    private Task RefreshProxyStatusAsync() => RunBusyAsync("Reading proxy status…", async () =>
+    {
+        try
+        {
+            IpcResponse response = await PipeClient.SendAsync(new IpcRequest { Action = IpcAction.GetProxyStatus });
+            _proxyStatus.Text = response.Success ? response.Message : "Could not read proxy status: " + response.Message;
+            AppendLog(response);
+        }
+        catch (Exception ex)
+        {
+            _proxyStatus.Text = "Could not read proxy status: " + ex.Message;
+            AppendLog(IpcResponse.Fail("Refresh proxy status failed: " + ex.Message));
         }
     });
 
@@ -645,6 +679,7 @@ public sealed class MainForm : Form
                 Action = IpcAction.SetProxyPreset,
                 PresetName = preset.Name
             })));
+            await RefreshProxyStatusAsync();
         }
         catch (Exception ex)
         {
@@ -658,6 +693,7 @@ public sealed class MainForm : Form
         {
             await RunBusyAsync("Resetting proxy…", async () =>
                 AppendLog(await PipeClient.SendAsync(new IpcRequest { Action = IpcAction.ResetProxy })));
+            await RefreshProxyStatusAsync();
         }
         catch (Exception ex)
         {

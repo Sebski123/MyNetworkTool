@@ -19,6 +19,8 @@ public enum IpcAction
     GetAdapterDetails,
     /// <summary>Read-only: enumerate configured proxy presets. Result in <see cref="IpcResponse.Presets"/>.</summary>
     ListProxyPresets,
+    /// <summary>Read-only: current machine proxy values, returned in <see cref="IpcResponse.Message"/>.</summary>
+    GetProxyStatus,
     SetStaticIp,
     SetDhcp,
     SetNetworkProfile,

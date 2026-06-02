@@ -119,6 +119,30 @@ public static class ProxyOperations
         }
     }
 
+    public static IpcResponse GetStatus(string? scope)
+    {
+        try
+        {
+            string? httpProxy = Environment.GetEnvironmentVariable("HTTP_PROXY", EnvironmentVariableTarget.Machine);
+            string? httpsProxy = Environment.GetEnvironmentVariable("HTTPS_PROXY", EnvironmentVariableTarget.Machine);
+
+            string message =
+                $"Current proxy (machine scope): HTTP_PROXY={(string.IsNullOrWhiteSpace(httpProxy) ? "(not set)" : httpProxy)}; " +
+                $"HTTPS_PROXY={(string.IsNullOrWhiteSpace(httpsProxy) ? "(not set)" : httpsProxy)}";
+
+            if (string.Equals(scope, "user", StringComparison.OrdinalIgnoreCase))
+            {
+                message += " Note: only machine scope is supported in this draft.";
+            }
+
+            return IpcResponse.Ok(message);
+        }
+        catch (Exception ex)
+        {
+            return IpcResponse.Fail(ex.Message);
+        }
+    }
+
     public static IpcResponse Reset(string? scope)
     {
         try

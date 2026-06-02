@@ -155,7 +155,7 @@ One line of JSON per request, one line per response, over `\\.\pipe\MyNetworkToo
 { "action": "SetProxyPreset", "presetName": "Work" }
 { "action": "ResetProxy" }
 ```
-**Read-only helpers used by the UI:** `Ping`, `ListAdapters`, `ListProxyPresets`.
+**Read-only helpers used by the UI:** `Ping`, `ListAdapters`, `ListProxyPresets`, `GetProxyStatus`.
 
 **Response**
 ```json
@@ -163,6 +163,7 @@ One line of JSON per request, one line per response, over `\\.\pipe\MyNetworkToo
 { "success": false, "message": "Adapter not found: {GUID}" }
 ```
 `ListAdapters` adds an `adapters` array; `ListProxyPresets` adds a `presets` array.
+`GetProxyStatus` returns the current machine-scope `HTTP_PROXY`/`HTTPS_PROXY` values in `message`.
 
 `interfaceId` is the **interface GUID** (`NetworkInterface.Id`) — a stable identifier. The service
 resolves it to the integer interface index used by the `Net*` cmdlets, and rejects an unknown id.
