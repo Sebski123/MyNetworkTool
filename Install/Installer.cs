@@ -520,9 +520,17 @@ public static class Installer
                 }
                 catch
                 {
-                    // The target may be locked by a running service instance. Stop it and retry once.
+                    // The target exe is locked by a running process (service or tray).
+                    // Windows executables are opened with FILE_SHARE_DELETE, so we can rename the
+                    // old file out of the way even while it is running, then copy the new one in.
+                    // The renamed copy is scheduled for deletion on next reboot.
                     try { ServiceControl.Stop(Constants.ServiceName); } catch { }
-                    File.Copy(source, Constants.InstalledExePath, overwrite: true);
+
+                    string oldExePath = Constants.InstalledExePath + ".old";
+                    try { File.Delete(oldExePath); } catch { }
+                    File.Move(Constants.InstalledExePath, oldExePath);
+                    File.Copy(source, Constants.InstalledExePath, overwrite: false);
+                    MoveFileEx(oldExePath, null, MOVEFILE_DELAY_UNTIL_REBOOT);
                 }
             }
 
