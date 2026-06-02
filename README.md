@@ -23,7 +23,7 @@ paths. The service validates every input before acting.
 
 | Command | What it does |
 |---|---|
-| `MyNetworkTool.exe` | If the service is installed → launches the tray UI. Otherwise offers to run the one-time elevated install. |
+| `MyNetworkTool.exe` | Checks GitHub for a newer release and offers to download/install it (with a release-page link). Then, if the service is installed → launches the tray UI; otherwise offers to run the one-time elevated install. |
 | `MyNetworkTool.exe install` | Self-elevates (UAC once), copies the exe to `C:\Program Files\MyNetworkTool`, registers + starts the LocalSystem service, adds a logon auto-start entry. |
 | `MyNetworkTool.exe uninstall` | Self-elevates, stops + removes the service, clears the auto-start entry, removes installed files. |
 | `MyNetworkTool.exe service` | Runs the Windows Service host (started by the SCM as LocalSystem; also runnable from an admin console for debugging). |
