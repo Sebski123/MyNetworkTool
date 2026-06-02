@@ -20,6 +20,12 @@ public static class NetworkOperations
         try
         {
             var adapter = AdapterService.ResolveByIdOrThrow(interfaceId);
+            if (IsAdapterDisabled(adapter))
+            {
+                return IpcResponse.Fail(
+                    $"Adapter '{adapter.Name}' is disabled. Enable it before applying IP settings.");
+            }
+
             int idx = adapter.InterfaceIndex;
             if (idx <= 0)
             {
@@ -84,6 +90,12 @@ public static class NetworkOperations
         try
         {
             var adapter = AdapterService.ResolveByIdOrThrow(interfaceId);
+            if (IsAdapterDisabled(adapter))
+            {
+                return IpcResponse.Fail(
+                    $"Adapter '{adapter.Name}' is disabled. Enable it before applying IP settings.");
+            }
+
             int idx = adapter.InterfaceIndex;
             if (idx <= 0)
             {
@@ -195,4 +207,7 @@ public static class NetworkOperations
     /// </summary>
     private static bool IsIpToken(string? s) =>
         !string.IsNullOrEmpty(s) && s.All(c => char.IsAsciiHexDigit(c) || c == '.' || c == ':');
+
+    private static bool IsAdapterDisabled(AdapterInfo adapter) =>
+        string.Equals(adapter.Status, "Disabled", StringComparison.OrdinalIgnoreCase);
 }
