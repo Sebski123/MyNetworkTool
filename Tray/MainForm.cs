@@ -573,7 +573,16 @@ public sealed class MainForm : Form
                 DnsServers = dns
             };
 
-            await RunBusyAsync("Applying static IP…", async () => AppendLog(await PipeClient.SendAsync(request)));
+            await RunBusyAsync("Applying static IP…", async () =>
+            {
+                IpcResponse response = await PipeClient.SendAsync(request);
+                AppendLog(response);
+
+                if (response.Success)
+                {
+                    await RefreshAdaptersAsync();
+                }
+            });
         }
         catch (Exception ex)
         {
@@ -591,11 +600,20 @@ public sealed class MainForm : Form
                 return;
             }
 
-            await RunBusyAsync("Enabling DHCP…", async () => AppendLog(await PipeClient.SendAsync(new IpcRequest
+            await RunBusyAsync("Enabling DHCP…", async () =>
             {
-                Action = IpcAction.SetDhcp,
-                InterfaceId = a.Id
-            })));
+                IpcResponse response = await PipeClient.SendAsync(new IpcRequest
+                {
+                    Action = IpcAction.SetDhcp,
+                    InterfaceId = a.Id
+                });
+                AppendLog(response);
+
+                if (response.Success)
+                {
+                    await RefreshAdaptersAsync();
+                }
+            });
         }
         catch (Exception ex)
         {
@@ -617,12 +635,21 @@ public sealed class MainForm : Form
                 return;
             }
 
-            await RunBusyAsync($"Setting profile {category}…", async () => AppendLog(await PipeClient.SendAsync(new IpcRequest
+            await RunBusyAsync($"Setting profile {category}…", async () =>
             {
-                Action = IpcAction.SetNetworkProfile,
-                InterfaceId = a.Id,
-                Category = category
-            })));
+                IpcResponse response = await PipeClient.SendAsync(new IpcRequest
+                {
+                    Action = IpcAction.SetNetworkProfile,
+                    InterfaceId = a.Id,
+                    Category = category
+                });
+                AppendLog(response);
+
+                if (response.Success)
+                {
+                    await RefreshAdaptersAsync();
+                }
+            });
         }
         catch (Exception ex)
         {
