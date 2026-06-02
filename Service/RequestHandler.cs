@@ -47,6 +47,10 @@ public static class RequestHandler
                     };
                     break;
 
+                case IpcAction.GetProxyStatus:
+                    response = ProxyOperations.GetStatus(req.ProxyScope);
+                    break;
+
                 case IpcAction.SetStaticIp:
                     response = HandleSetStaticIp(req);
                     break;
