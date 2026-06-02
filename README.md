@@ -17,6 +17,9 @@ paths. The service validates every input before acting.
 > The build produces **`MyNetworkTool.exe`** (the Visual Studio project and C# namespaces remain
 > `NetworkingTool`; only the assembly name differs).
 
+<img width="562" height="799" alt="image" src="https://github.com/user-attachments/assets/1eb4b28d-b0e6-44ea-8a9b-6f0ebf9a390f" />
+
+
 ---
 
 ## Modes (one exe, multiple entry points)
