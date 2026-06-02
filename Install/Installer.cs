@@ -2,9 +2,11 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Diagnostics;
+using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.ComponentModel;
+using System.Text.Json;
 using System.Windows.Forms;
 using Microsoft.Win32;
 using NetworkingTool.Shared;
@@ -26,6 +28,11 @@ namespace NetworkingTool.Install;
 public static class Installer
 {
     private const uint ATTACH_PARENT_PROCESS = 0xFFFFFFFF;
+    private const string GitHubOwner = "Sebski123";
+    private const string GitHubRepo = "MyNetworkTool";
+    private const string GitHubLatestReleaseApi = "https://api.github.com/repos/" + GitHubOwner + "/" + GitHubRepo + "/releases/latest";
+    private const string GitHubReleasePage = "https://github.com/" + GitHubOwner + "/" + GitHubRepo + "/releases/latest";
+    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(10) };
 
     // Used to schedule deletion of a locked install folder on next reboot.
     private const uint MOVEFILE_DELAY_UNTIL_REBOOT = 0x4;
@@ -211,6 +218,32 @@ public static class Installer
         return r == DialogResult.Yes;
     }
 
+    /// <summary>
+    /// Checks GitHub for a newer release than the running build, prompts the user, downloads the
+    /// release executable and runs "install" when accepted.
+    /// </summary>
+    public static bool TryUpdateFromGitHubRelease()
+    {
+        try
+        {
+            if (!TryGetGitHubUpdate(out var update))
+            {
+                return false;
+            }
+
+            if (!PromptForGitHubUpdate(update))
+            {
+                return false;
+            }
+
+            return DownloadAndInstall(update.DownloadUrl) == 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     /// <summary>Re-launches this exe elevated with the "install" argument.</summary>
     public static int RelaunchElevatedInstall() => RelaunchElevated("install");
 
@@ -248,6 +281,207 @@ public static class Installer
             return 1;
         }
     }
+
+    private static bool TryGetGitHubUpdate(out GitHubUpdateInfo update)
+    {
+        update = default;
+
+        Version? runningVer = TryGetFileVersion(Environment.ProcessPath!);
+        if (runningVer is null)
+        {
+            return false;
+        }
+
+        using var req = new HttpRequestMessage(HttpMethod.Get, GitHubLatestReleaseApi);
+        req.Headers.UserAgent.ParseAdd("MyNetworkTool");
+        req.Headers.Accept.ParseAdd("application/vnd.github+json");
+
+        using HttpResponseMessage res = Http.Send(req);
+        if (!res.IsSuccessStatusCode)
+        {
+            return false;
+        }
+
+        using var stream = res.Content.ReadAsStream();
+        using JsonDocument doc = JsonDocument.Parse(stream);
+        JsonElement root = doc.RootElement;
+
+        string? tag = root.TryGetProperty("tag_name", out var tagEl) ? tagEl.GetString() : null;
+        string? htmlUrl = root.TryGetProperty("html_url", out var htmlEl) ? htmlEl.GetString() : null;
+        string releaseUrl = !string.IsNullOrWhiteSpace(htmlUrl) ? htmlUrl : GitHubReleasePage;
+        if (string.IsNullOrWhiteSpace(tag) || !TryParseReleaseVersion(tag, out Version latestVer))
+        {
+            return false;
+        }
+
+        Version current = NormalizeVersion(runningVer);
+        Version latest = NormalizeVersion(latestVer);
+        if (latest <= current)
+        {
+            return false;
+        }
+
+        string? downloadUrl = null;
+        if (root.TryGetProperty("assets", out var assetsEl) && assetsEl.ValueKind == JsonValueKind.Array)
+        {
+            foreach (JsonElement asset in assetsEl.EnumerateArray())
+            {
+                string? name = asset.TryGetProperty("name", out var nameEl) ? nameEl.GetString() : null;
+                string? url = asset.TryGetProperty("browser_download_url", out var urlEl) ? urlEl.GetString() : null;
+                if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(url))
+                {
+                    continue;
+                }
+
+                if (name.Equals(Constants.ExeFileName, StringComparison.OrdinalIgnoreCase) ||
+                    name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                {
+                    downloadUrl = url;
+                    break;
+                }
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(downloadUrl))
+        {
+            return false;
+        }
+
+        update = new GitHubUpdateInfo(tag, releaseUrl, downloadUrl);
+        return true;
+    }
+
+    private static bool PromptForGitHubUpdate(GitHubUpdateInfo update)
+    {
+        using var dialog = new Form
+        {
+            Text = "MyNetworkTool update available",
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            StartPosition = FormStartPosition.CenterScreen,
+            MaximizeBox = false,
+            MinimizeBox = false,
+            ShowInTaskbar = false,
+            ClientSize = new System.Drawing.Size(520, 170),
+        };
+
+        var label = new Label
+        {
+            AutoSize = false,
+            Left = 12,
+            Top = 12,
+            Width = 496,
+            Height = 56,
+            Text = $"A newer MyNetworkTool release ({update.TagName}) is available.\n\nDownload and install it now?",
+        };
+
+        var link = new LinkLabel
+        {
+            AutoSize = false,
+            Left = 12,
+            Top = 72,
+            Width = 496,
+            Height = 20,
+            Text = update.ReleaseUrl,
+        };
+        link.LinkClicked += (_, _) =>
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = update.ReleaseUrl,
+                    UseShellExecute = true,
+                });
+            }
+            catch { }
+        };
+
+        var yesButton = new Button
+        {
+            Text = "Update",
+            DialogResult = DialogResult.Yes,
+            Left = 332,
+            Top = 122,
+            Width = 84,
+        };
+        var noButton = new Button
+        {
+            Text = "Not now",
+            DialogResult = DialogResult.No,
+            Left = 424,
+            Top = 122,
+            Width = 84,
+        };
+
+        dialog.Controls.Add(label);
+        dialog.Controls.Add(link);
+        dialog.Controls.Add(yesButton);
+        dialog.Controls.Add(noButton);
+        dialog.AcceptButton = yesButton;
+        dialog.CancelButton = noButton;
+
+        return dialog.ShowDialog() == DialogResult.Yes;
+    }
+
+    private static int DownloadAndInstall(string downloadUrl)
+    {
+        string updateDir = Path.Combine(Path.GetTempPath(), "MyNetworkTool", "updates", Guid.NewGuid().ToString("N"));
+        string downloadedExe = Path.Combine(updateDir, Constants.ExeFileName);
+        Directory.CreateDirectory(updateDir);
+
+        try
+        {
+            using HttpResponseMessage response = Http.GetAsync(downloadUrl).GetAwaiter().GetResult();
+            response.EnsureSuccessStatusCode();
+
+            using (Stream source = response.Content.ReadAsStream())
+            using (FileStream target = File.Create(downloadedExe))
+            {
+                source.CopyTo(target);
+            }
+
+            using var process = Process.Start(new ProcessStartInfo
+            {
+                FileName = downloadedExe,
+                Arguments = "install",
+                UseShellExecute = true,
+            });
+
+            if (process is null)
+            {
+                return 1;
+            }
+
+            process.WaitForExit();
+            return process.ExitCode;
+        }
+        finally
+        {
+            try { Directory.Delete(updateDir, recursive: true); } catch { }
+        }
+    }
+
+    private static bool TryParseReleaseVersion(string raw, out Version version)
+    {
+        string trimmed = raw.Trim();
+        if (trimmed.StartsWith('v') || trimmed.StartsWith('V'))
+        {
+            trimmed = trimmed[1..];
+        }
+
+        return Version.TryParse(trimmed, out version!);
+    }
+
+    private static Version NormalizeVersion(Version version)
+    {
+        return new Version(
+            version.Major,
+            version.Minor,
+            version.Build < 0 ? 0 : version.Build,
+            version.Revision < 0 ? 0 : version.Revision);
+    }
+
+    private readonly record struct GitHubUpdateInfo(string TagName, string ReleaseUrl, string DownloadUrl);
 
     // ---- Main entry points (called from Program.cs) ----
 

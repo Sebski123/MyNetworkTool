@@ -47,6 +47,15 @@ internal static class Program
     /// <summary>No-argument launch: route to the tray if installed, otherwise guide the user to install.</summary>
     private static int DefaultLaunch()
     {
+        if (Installer.TryUpdateFromGitHubRelease())
+        {
+            Installer.StopOtherTrayInstances();
+            if (Installer.LaunchInstalledTray())
+            {
+                return 0;
+            }
+        }
+
         if (Installer.IsServiceInstalled())
         {
             // Launching a newer build over an older install auto-updates the installed copy (one
