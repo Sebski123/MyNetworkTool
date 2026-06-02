@@ -24,8 +24,8 @@
 
     <!-- Product version. Read at runtime to decide whether a launched build is newer than the
          installed copy (auto-update on default launch). Bump on each release. -->
-    <Version>1.2.1.0</Version>
-    <FileVersion>1.2.1.0</FileVersion>
+    <Version>1.2.2.0</Version>
+    <FileVersion>1.2.2.0</FileVersion>
 
     <Platforms>AnyCPU;x64</Platforms>
 

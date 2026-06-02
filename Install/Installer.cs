@@ -32,6 +32,8 @@ public static class Installer
     private const string GitHubRepo = "MyNetworkTool";
     private const string GitHubLatestReleaseApi = "https://api.github.com/repos/" + GitHubOwner + "/" + GitHubRepo + "/releases/latest";
     private const string GitHubReleasePage = "https://github.com/" + GitHubOwner + "/" + GitHubRepo + "/releases/latest";
+    private const string LocalUpdatePathEnvVar = "MYNETWORKTOOL_UPDATE_PATH";
+    private const string LocalUpdateVersionEnvVar = "MYNETWORKTOOL_UPDATE_VERSION";
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(10) };
 
     // Used to schedule deletion of a locked install folder on next reboot.
@@ -286,6 +288,11 @@ public static class Installer
     {
         update = default;
 
+        if (TryGetLocalUpdateOverride(out update))
+        {
+            return true;
+        }
+
         Version? runningVer = TryGetFileVersion(Environment.ProcessPath!);
         if (runningVer is null)
         {
@@ -351,8 +358,41 @@ public static class Installer
         return true;
     }
 
+    private static bool TryGetLocalUpdateOverride(out GitHubUpdateInfo update)
+    {
+        update = default;
+
+        string? rawPath = Environment.GetEnvironmentVariable(LocalUpdatePathEnvVar);
+        if (string.IsNullOrWhiteSpace(rawPath))
+        {
+            return false;
+        }
+
+        string localPath = Environment.ExpandEnvironmentVariables(rawPath.Trim().Trim('"'));
+        if (!Path.IsPathRooted(localPath))
+        {
+            localPath = Path.GetFullPath(localPath);
+        }
+
+        if (!File.Exists(localPath))
+        {
+            return false;
+        }
+
+        string? rawVersion = Environment.GetEnvironmentVariable(LocalUpdateVersionEnvVar);
+        string tag = !string.IsNullOrWhiteSpace(rawVersion)
+            ? rawVersion.Trim()
+            : (TryGetFileVersion(localPath)?.ToString() ?? "local-test");
+
+        update = new GitHubUpdateInfo(tag, localPath, localPath);
+        return true;
+    }
+
     private static bool PromptForGitHubUpdate(GitHubUpdateInfo update)
     {
+        bool hasWebLink = Uri.TryCreate(update.ReleaseUrl, UriKind.Absolute, out Uri? releaseUri) &&
+                          (releaseUri.Scheme == Uri.UriSchemeHttp || releaseUri.Scheme == Uri.UriSchemeHttps);
+
         using var dialog = new Form
         {
             Text = "MyNetworkTool update available",
@@ -381,20 +421,23 @@ public static class Installer
             Top = 72,
             Width = 496,
             Height = 20,
-            Text = update.ReleaseUrl,
+            Text = hasWebLink ? update.ReleaseUrl : "Source: " + update.ReleaseUrl,
         };
-        link.LinkClicked += (_, _) =>
+        if (hasWebLink)
         {
-            try
+            link.LinkClicked += (_, _) =>
             {
-                Process.Start(new ProcessStartInfo
+                try
                 {
-                    FileName = update.ReleaseUrl,
-                    UseShellExecute = true,
-                });
-            }
-            catch { }
-        };
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = update.ReleaseUrl,
+                        UseShellExecute = true,
+                    });
+                }
+                catch { }
+            };
+        }
 
         var yesButton = new Button
         {
@@ -431,12 +474,17 @@ public static class Installer
 
         try
         {
-            using HttpResponseMessage response = Http.GetAsync(downloadUrl).GetAwaiter().GetResult();
-            response.EnsureSuccessStatusCode();
-
-            using (Stream source = response.Content.ReadAsStream())
-            using (FileStream target = File.Create(downloadedExe))
+            if (File.Exists(downloadUrl))
             {
+                File.Copy(downloadUrl, downloadedExe, overwrite: true);
+            }
+            else
+            {
+                using HttpResponseMessage response = Http.GetAsync(downloadUrl).GetAwaiter().GetResult();
+                response.EnsureSuccessStatusCode();
+
+                using Stream source = response.Content.ReadAsStream();
+                using FileStream target = File.Create(downloadedExe);
                 source.CopyTo(target);
             }
 
@@ -526,8 +574,7 @@ public static class Installer
                     // The renamed copy is scheduled for deletion on next reboot.
                     try { ServiceControl.Stop(Constants.ServiceName); } catch { }
 
-                    string oldExePath = Constants.InstalledExePath + ".old";
-                    try { File.Delete(oldExePath); } catch { }
+                    string oldExePath = Constants.InstalledExePath + ".old." + Guid.NewGuid().ToString("N");
                     File.Move(Constants.InstalledExePath, oldExePath);
                     File.Copy(source, Constants.InstalledExePath, overwrite: false);
                     MoveFileEx(oldExePath, null, MOVEFILE_DELAY_UNTIL_REBOOT);

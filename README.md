@@ -132,6 +132,32 @@ Logs: `C:\ProgramData\MyNetworkTool\service.log`.
 
 ---
 
+## Testing updates without GitHub
+
+You can force the normal update flow to use a local published `.exe` instead of checking GitHub.
+
+1. Build the **currently installed / older** version and install it normally.
+2. Publish the **newer / candidate** build to any local path, for example:
+  ```powershell
+  dotnet publish NetworkingTool.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o publish-test
+  ```
+3. In the shell where you launch the old build, set these optional environment variables:
+  ```powershell
+  $env:MYNETWORKTOOL_UPDATE_PATH = "C:\path\to\publish-test\MyNetworkTool.exe"
+  $env:MYNETWORKTOOL_UPDATE_VERSION = "local-test"
+  ```
+4. Start the old build with no arguments.
+
+When `MYNETWORKTOOL_UPDATE_PATH` is set, the app skips the GitHub release check and offers that local file as the update package. The rest of the flow stays the same: prompt, copy to a temp update folder, run `install`, replace the installed exe, restart the tray.
+
+Notes:
+
+* `MYNETWORKTOOL_UPDATE_PATH` can be absolute or relative to the current working directory.
+* `MYNETWORKTOOL_UPDATE_VERSION` is optional; if omitted, the file version of the local `.exe` is shown when available.
+* Remove the environment variable when you want to go back to real GitHub-based update checks.
+
+---
+
 ## Operations & the wire protocol
 
 One line of JSON per request, one line per response, over `\\.\pipe\MyNetworkTool`.
