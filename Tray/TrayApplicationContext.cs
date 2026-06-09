@@ -32,6 +32,13 @@ public sealed class TrayApplicationContext : ApplicationContext
             ContextMenuStrip = menu
         };
         _notifyIcon.DoubleClick += (s, e) => ShowMainForm();
+
+        // Create the window up front (kept hidden) and start fetching adapters, proxy presets and
+        // proxy status in the background. The IPC continuations resume on the UI thread once the
+        // message loop starts, so by the time the user opens the GUI its data is already populated
+        // and there is no startup wait.
+        _mainForm = new MainForm();
+        _ = _mainForm.EnsureInitialDataLoadedAsync();
     }
 
     private void ShowMainForm()
@@ -40,6 +47,9 @@ public sealed class TrayApplicationContext : ApplicationContext
         {
             _mainForm = new MainForm();
         }
+
+        // No-op if the background prewarm already ran; only does work if the form was recreated.
+        _ = _mainForm.EnsureInitialDataLoadedAsync();
 
         _mainForm.Show();
         _mainForm.WindowState = FormWindowState.Normal;
@@ -60,6 +70,7 @@ public sealed class TrayApplicationContext : ApplicationContext
             // Dispose the NotifyIcon first (it removes the tray icon), then the Icon handle it used.
             _notifyIcon.Dispose();
             _trayIcon.Dispose();
+            _mainForm?.Dispose();
         }
         base.Dispose(disposing);
     }

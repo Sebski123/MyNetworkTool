@@ -50,6 +50,10 @@ public sealed class MainForm : Form
     // UI-thread only — every IPC continuation resumes here — so no locking is needed.
     private int _busyCount;
 
+    // Guards the one-time initial data load so it runs exactly once regardless of whether it is
+    // triggered by the background prewarm at startup or by the window being shown.
+    private bool _initialLoadStarted;
+
     public MainForm()
     {
         Text = "MyNetworkTool";
@@ -61,13 +65,29 @@ public sealed class MainForm : Form
         MaximizeBox = false;
 
         BuildControls();
+    }
 
-        Load += async (s, e) =>
+    /// <summary>
+    /// Runs the one-time initial data load (adapters, proxy presets, proxy status). It is safe to
+    /// call this before the window is ever shown so the data is fetched in the background at startup
+    /// and is ready the moment the user opens the GUI. Repeat calls are no-ops.
+    /// </summary>
+    public Task EnsureInitialDataLoadedAsync()
+    {
+        if (_initialLoadStarted)
+        {
+            return Task.CompletedTask;
+        }
+        _initialLoadStarted = true;
+
+        return LoadInitialDataAsync();
+
+        async Task LoadInitialDataAsync()
         {
             await RefreshAdaptersAsync();
             await RefreshPresetsAsync();
             await RefreshProxyStatusAsync();
-        };
+        }
     }
 
     private void BuildControls()
