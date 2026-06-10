@@ -480,12 +480,10 @@ public static class Installer
             }
             else
             {
-                using HttpResponseMessage response = Http.GetAsync(downloadUrl).GetAwaiter().GetResult();
-                response.EnsureSuccessStatusCode();
-
-                using Stream source = response.Content.ReadAsStream();
-                using FileStream target = File.Create(downloadedExe);
-                source.CopyTo(target);
+                if (!ShowDownloadProgress(downloadUrl, downloadedExe))
+                {
+                    return 1;
+                }
             }
 
             using var process = Process.Start(new ProcessStartInfo
@@ -507,6 +505,116 @@ public static class Installer
         {
             try { Directory.Delete(updateDir, recursive: true); } catch { }
         }
+    }
+
+    /// <summary>
+    /// Downloads <paramref name="downloadUrl"/> to <paramref name="destinationPath"/> while
+    /// showing a WinForms progress dialog. Returns true on success.
+    /// </summary>
+    private static bool ShowDownloadProgress(string downloadUrl, string destinationPath)
+    {
+        bool success = false;
+        Exception? downloadError = null;
+
+        using var form = new Form
+        {
+            Text = "Downloading update…",
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            StartPosition = FormStartPosition.CenterScreen,
+            MaximizeBox = false,
+            MinimizeBox = false,
+            ShowInTaskbar = true,
+            ClientSize = new System.Drawing.Size(420, 96),
+        };
+
+        var label = new Label
+        {
+            AutoSize = false,
+            Left = 12,
+            Top = 12,
+            Width = 396,
+            Height = 20,
+            Text = "Connecting…",
+        };
+
+        var progressBar = new ProgressBar
+        {
+            Left = 12,
+            Top = 40,
+            Width = 396,
+            Height = 24,
+            Minimum = 0,
+            Maximum = 100,
+            Style = ProgressBarStyle.Marquee,
+        };
+
+        form.Controls.Add(label);
+        form.Controls.Add(progressBar);
+
+        // Run the download asynchronously so the WinForms message pump keeps the UI responsive.
+        form.Load += async (_, _) =>
+        {
+            try
+            {
+                // A dedicated client with no timeout: the progress bar shows the user things
+                // are happening, so we don't want an arbitrary wall-clock cut-off.
+                using var client = new HttpClient { Timeout = System.Threading.Timeout.InfiniteTimeSpan };
+                using HttpResponseMessage response = await client.SendAsync(
+                    new HttpRequestMessage(HttpMethod.Get, downloadUrl),
+                    HttpCompletionOption.ResponseHeadersRead);
+                response.EnsureSuccessStatusCode();
+
+                long? totalBytes = response.Content.Headers.ContentLength;
+                if (totalBytes is > 0)
+                {
+                    progressBar.Style = ProgressBarStyle.Continuous;
+                }
+
+                using Stream source = await response.Content.ReadAsStreamAsync();
+                using FileStream target = File.Create(destinationPath);
+
+                byte[] buffer = new byte[81_920];
+                long totalRead = 0;
+                int bytesRead;
+
+                while ((bytesRead = await source.ReadAsync(buffer)) > 0)
+                {
+                    await target.WriteAsync(buffer.AsMemory(0, bytesRead));
+                    totalRead += bytesRead;
+
+                    if (totalBytes is > 0)
+                    {
+                        int percent = (int)(totalRead * 100 / totalBytes.Value);
+                        progressBar.Value = Math.Min(percent, 100);
+                        label.Text = $"Downloading… {totalRead / 1024:N0} KB / {totalBytes.Value / 1024:N0} KB";
+                    }
+                    else
+                    {
+                        label.Text = $"Downloading… {totalRead / 1024:N0} KB";
+                    }
+                }
+
+                success = true;
+            }
+            catch (Exception ex)
+            {
+                downloadError = ex;
+            }
+            finally
+            {
+                form.Close();
+            }
+        };
+
+        form.ShowDialog();
+
+        if (downloadError is not null)
+        {
+            ShowMessage($"Download failed: {downloadError.Message}", true);
+            return false;
+        }
+
+        return success;
     }
 
     private static bool TryParseReleaseVersion(string raw, out Version version)
