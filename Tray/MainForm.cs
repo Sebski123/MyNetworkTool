@@ -56,7 +56,7 @@ public sealed class MainForm : Form
 
     public MainForm()
     {
-        Text = "MyNetworkTool";
+        Text = $"MyNetworkTool v{Application.ProductVersion.Substring(0, Application.ProductVersion.IndexOf('+'))}";
         Icon = AppIcon.Load(SystemInformation.IconSize);   // custom title-bar / taskbar icon
         ClientSize = new Size(560, 745);
         StartPosition = FormStartPosition.CenterScreen;
