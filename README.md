@@ -200,7 +200,9 @@ resolves it to the integer interface index used by the `Net*` cmdlets, and rejec
 ### Proxy presets
 
 Built-in: `Work` → `http://proxy.example.com:8080`, `Local` → `http://127.0.0.1:8080`.
-Override/extend by dropping `C:\ProgramData\MyNetworkTool\presets.json`:
+Override/extend with `C:\ProgramData\MyNetworkTool\presets.json`. Because that directory is locked to
+SYSTEM/Administrators, the file must be created by an administrator (the service ignores it unless it
+is owned by SYSTEM or Administrators):
 ```json
 [ { "name": "Corp", "httpProxy": "http://proxy.corp.local:3128", "httpsProxy": "http://proxy.corp.local:3128" } ]
 ```
@@ -233,13 +235,63 @@ string is ever embedded verbatim.
   canonical form and additionally checked at the sink to contain only IP-literal characters
   (`[0-9A-Fa-f.:]`). On .NET 9, `IPAddress.TryParse` already rejects non-numeric zone ids, but these
   layers make injection impossible regardless of runtime/version or future callers.
-* **Pipe ACL.** The pipe grants **Authenticated Users** read/write (so the unelevated tray can talk
-  to it — the whole point) and Administrators/SYSTEM full control. ⚠️ This means **any logged-in
-  local user** can request these network/proxy changes; there is no additional per-user
-  authorization. That is acceptable for a single-user workstation utility but should be tightened
-  (e.g. restrict the ACL to a specific group, or add a caller check) before multi-user deployment.
+* **Pipe ACL (local interactive only).** The pipe grants the **INTERACTIVE** logon group (`S-1-5-4`)
+  read/write — present in a console or RDP session token but **not** in a network (SMB) logon token —
+  plus Administrators/SYSTEM full control. A caller reaching the pipe remotely over
+  `\\host\pipe\MyNetworkTool` is therefore denied; the privileged interface is local-only. ⚠️ Any
+  user *interactively* logged on can still request these network/proxy changes (no per-user
+  authorization) — acceptable for a single-user workstation, but tighten the ACL to a specific group
+  before multi-user deployment.
+* **Hardened data directory.** The installer replaces the inherited `C:\ProgramData` ACL on
+  `C:\ProgramData\MyNetworkTool` with an explicit one (SYSTEM/Administrators write, Users read-only,
+  inheritance off). This stops a standard user from planting a `presets.json` the LocalSystem service
+  would otherwise act on (e.g. pointing the machine-wide proxy at an attacker host). As defense in
+  depth, the service also **ignores `presets.json` unless it is owned by SYSTEM or Administrators**.
+* **Signed updates only.** The service-driven updater verifies that a **downloaded** release is
+  Authenticode-signed by a pinned certificate (`Constants.ExpectedCodeSigningThumbprint`) before it
+  replaces the SYSTEM service binary. The check is **fail-closed**: while the thumbprint is empty,
+  every downloaded update is refused. See *Signing & updates* below.
+* **Bounded privileged operations.** Update downloads have a hard 5-minute timeout, and only one
+  update install runs at a time (concurrent requests are rejected immediately), so a slow or repeated
+  update request cannot tie up every pipe-server slot.
 
 ---
+
+## Signing & updates
+
+The LocalSystem service-driven updater (and the legacy fallback) refuse to install any **downloaded**
+binary unless it is Authenticode-signed by the certificate whose SHA-1 thumbprint is pinned in
+[`Constants.ExpectedCodeSigningThumbprint`](Shared/Constants.cs). This pins the publisher to **your
+own key** — a publicly-trusted CA is not required, so a free self-signed certificate works. The check
+is fail-closed: while the constant is empty, downloaded updates are rejected.
+
+To enable updates, create a (long-lived) code-signing certificate, pin its thumbprint, and sign each
+release:
+
+```powershell
+# 1. Create a self-signed code-signing cert (a long lifetime avoids breakage on expiry).
+$cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=MyNetworkTool" `
+    -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddYears(20) -KeyExportPolicy Exportable
+
+# 2. Print the thumbprint to paste into Constants.ExpectedCodeSigningThumbprint (spaces/case ignored).
+$cert.Thumbprint
+
+# 3. Back up the private key (losing it means you must re-pin a new thumbprint).
+$pwd = ConvertTo-SecureString "choose-a-password" -AsPlainText -Force
+Export-PfxCertificate -Cert $cert -FilePath MyNetworkTool-signing.pfx -Password $pwd
+```
+
+Then sign the published exe on every release before uploading it to the GitHub release:
+
+```powershell
+signtool sign /fd SHA256 /a /n "MyNetworkTool" publish\MyNetworkTool.exe
+```
+
+The verifier pins the certificate by thumbprint and uses `WinVerifyTrust` only to confirm the file's
+bytes still match the signature (tamper detection); because the self-signed root is intentionally not
+in the trusted store, an "untrusted root" result is accepted while a bad digest, missing signature, or
+wrong signer is rejected. The local test-override path (`MYNETWORKTOOL_UPDATE_PATH`, settable only by
+an administrator) is exempt so unsigned local builds can still be tested.
 
 ## Verified
 
@@ -259,8 +311,9 @@ string is ever embedded verbatim.
 
 ## Known limitations (first draft)
 
-* **Pipe authorization is coarse** — any Authenticated User can drive the service (see Security
-  notes). No rate-limiting.
+* **Pipe authorization is coarse** — any *interactively* logged-on user can drive the service (see
+  Security notes); access is restricted to local interactive logons but not to a specific group. No
+  general per-request rate-limiting (only the privileged update is single-flighted).
 * **Static-IP changes are not transactional.** DHCP is disabled and the address/gateway are applied
   in one step; the DNS step runs separately and is reported independently, but there is no rollback
   if a step fails after an earlier one succeeded. Verify the result and re-apply or switch to DHCP
@@ -278,5 +331,7 @@ string is ever embedded verbatim.
   files are scheduled for delete-on-reboot and the dialog says so.
 * **Single-file self-contained exe is large (~100 MB).** Use the framework-dependent publish for a
   small exe if the .NET 9 Desktop runtime is present on the target.
-* **No code signing / custom icon.** SmartScreen may warn on first run; the tray uses the default
-  application icon.
+* **Self-update requires signing.** The in-app/service updater is fail-closed until you configure a
+  code-signing certificate (see *Signing & updates*). Until then it refuses downloaded updates — the
+  manual build-and-install flow is unaffected. A self-signed certificate is not trusted by SmartScreen,
+  so a warning may still appear on first run.

@@ -4,12 +4,14 @@ using System.Linq;
 using System.Diagnostics;
 using System.Net.Http;
 using System.Runtime.InteropServices;
+using System.Security.AccessControl;
 using System.Security.Principal;
 using System.ComponentModel;
 using System.Text.Json;
 using System.Windows.Forms;
 using System.Threading.Tasks;
 using Microsoft.Win32;
+using NetworkingTool.Service;
 using NetworkingTool.Shared;
 
 namespace NetworkingTool.Install;
@@ -206,6 +208,35 @@ public static class Installer
         }
     }
 
+    /// <summary>
+    /// Replaces the inherited ACL on the ProgramData data directory with an explicit one:
+    /// SYSTEM + Administrators full control, Users read-only, inheritance disabled. The default
+    /// C:\ProgramData ACL grants Users a create-files/create-folders ACE, which a standard user
+    /// could otherwise use to drop a <c>presets.json</c> the LocalSystem service would act on
+    /// (e.g. pointing the machine-wide proxy at an attacker host). Called from the elevated
+    /// installer. Idempotent — safe to run on every install/upgrade.
+    /// </summary>
+    private static void SecureDataDirectory()
+    {
+        var dir = new DirectoryInfo(Constants.DataDir);
+
+        var system = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
+        var admins = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+        var users  = new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null);
+
+        const InheritanceFlags inherit = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
+
+        var security = new DirectorySecurity();
+        // Stop inheriting from C:\ProgramData and drop the inherited ACEs (don't preserve them).
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        security.AddAccessRule(new FileSystemAccessRule(system, FileSystemRights.FullControl, inherit, PropagationFlags.None, AccessControlType.Allow));
+        security.AddAccessRule(new FileSystemAccessRule(admins, FileSystemRights.FullControl, inherit, PropagationFlags.None, AccessControlType.Allow));
+        security.AddAccessRule(new FileSystemAccessRule(users, FileSystemRights.ReadAndExecute, inherit, PropagationFlags.None, AccessControlType.Allow));
+        security.SetOwner(admins);
+
+        dir.SetAccessControl(security);
+    }
+
     /// <summary>Asks the user whether they want to run the one-time elevated install now.</summary>
     public static bool PromptForInstall()
     {
@@ -301,12 +332,25 @@ public static class Installer
             {
                 if (File.Exists(update.DownloadUrl))
                 {
+                    // Local-override (admin-provided) path used for testing: only an administrator
+                    // can set the machine env var that selects it, so it is trusted as-is.
                     File.Copy(update.DownloadUrl, downloadedExe, overwrite: true);
                 }
-                else if (!DownloadFileNoUi(update.DownloadUrl, downloadedExe, out string downloadError))
+                else
                 {
-                    message = "Update download failed: " + downloadError;
-                    return false;
+                    if (!DownloadFileNoUi(update.DownloadUrl, downloadedExe, out string downloadError))
+                    {
+                        message = "Update download failed: " + downloadError;
+                        return false;
+                    }
+
+                    // A downloaded binary is about to replace the SYSTEM service image — verify it is
+                    // signed by our pinned certificate before trusting it.
+                    if (!CodeSigning.VerifyPinned(downloadedExe, Constants.ExpectedCodeSigningThumbprint, out string signatureError))
+                    {
+                        message = "Update rejected: " + signatureError;
+                        return false;
+                    }
                 }
 
                 if (!ReplaceInstalledExecutable(downloadedExe, out string replaceError))
@@ -564,12 +608,20 @@ public static class Installer
         {
             if (File.Exists(downloadUrl))
             {
+                // Local-override (admin-provided) test path; trusted as-is.
                 File.Copy(downloadUrl, downloadedExe, overwrite: true);
             }
             else
             {
                 if (!ShowDownloadProgress(downloadUrl, downloadedExe))
                 {
+                    return 1;
+                }
+
+                // Verify the downloaded installer is signed by our pinned certificate before running it.
+                if (!CodeSigning.VerifyPinned(downloadedExe, Constants.ExpectedCodeSigningThumbprint, out string signatureError))
+                {
+                    ShowMessage("Update rejected: " + signatureError, true);
                     return 1;
                 }
             }
@@ -595,22 +647,36 @@ public static class Installer
         }
     }
 
+    /// <summary>Hard upper bound on a no-UI (service-side) update download, so a stalled or endless
+    /// transfer cannot hold a pipe-server slot indefinitely.</summary>
+    private static readonly TimeSpan DownloadTimeout = TimeSpan.FromMinutes(5);
+
     private static bool DownloadFileNoUi(string downloadUrl, string destinationPath, out string error)
     {
         error = string.Empty;
 
         try
         {
-            using var client = new HttpClient { Timeout = System.Threading.Timeout.InfiniteTimeSpan };
+            // A single cancellation budget bounds the ENTIRE download. With ResponseHeadersRead,
+            // HttpClient.Timeout only covers the header read, not the streaming copy — so the copy is
+            // governed by this token instead. Without it (the old InfiniteTimeSpan) a slow-loris or
+            // never-ending response would hang the privileged handler forever.
+            using var cts = new System.Threading.CancellationTokenSource(DownloadTimeout);
+            using var client = new HttpClient { Timeout = DownloadTimeout };
             using HttpResponseMessage response = client.Send(
                 new HttpRequestMessage(HttpMethod.Get, downloadUrl),
-                HttpCompletionOption.ResponseHeadersRead);
+                HttpCompletionOption.ResponseHeadersRead, cts.Token);
             response.EnsureSuccessStatusCode();
 
-            using Stream source = response.Content.ReadAsStream();
+            using Stream source = response.Content.ReadAsStream(cts.Token);
             using FileStream target = File.Create(destinationPath);
-            source.CopyTo(target);
+            source.CopyToAsync(target, cts.Token).GetAwaiter().GetResult();
             return true;
+        }
+        catch (OperationCanceledException)
+        {
+            error = $"the download exceeded the {DownloadTimeout.TotalMinutes:N0}-minute time limit.";
+            return false;
         }
         catch (Exception ex)
         {
@@ -832,8 +898,13 @@ public static class Installer
                 }
             }
 
-            // 4. Ensure the data directory exists (service log / presets).
+            // 4. Ensure the data directory exists (service log / presets) and lock down its ACL.
+            //    C:\ProgramData grants Users a create-files ACE by default, which a standard user
+            //    could use to plant a presets.json the LocalSystem service would then trust. Replace
+            //    the inherited ACL with an explicit SYSTEM/Admins-write, Users-read-only one.
             Directory.CreateDirectory(Constants.DataDir);
+            try { SecureDataDirectory(); }
+            catch (Exception ex) { ServiceLog.Write("Failed to harden data directory ACL.", ex); }
 
             // 5. (Re)register the service. The embedded quotes are essential so the SCM parses
             //    the Program Files path and the trailing "service" argument correctly.

@@ -43,6 +43,20 @@ public static class Constants
     /// <summary>Installed executable file name (the published single file copied into InstallDir).</summary>
     public const string ExeFileName = "MyNetworkTool.exe";
 
+    /// <summary>
+    /// SHA-1 Authenticode thumbprint of the code-signing certificate that legitimately signs
+    /// MyNetworkTool releases. Before the LocalSystem service installs any <b>downloaded</b> update,
+    /// it verifies the binary is Authenticode-signed by exactly this certificate (see
+    /// <c>CodeSigning.VerifyPinned</c>). This pins the publisher to your own (possibly self-signed)
+    /// key, so a tampered or substituted download is refused — no publicly-trusted CA is required.
+    ///
+    /// Leave this empty to keep downloaded-update installs <b>disabled</b> (fail-closed): every
+    /// download is rejected until a thumbprint is configured. To enable it, create a code-signing
+    /// certificate, sign each released exe with it, and paste its thumbprint here (spaces/case are
+    /// ignored), e.g. "A1B2C3D4E5F6...".
+    /// </summary>
+    public const string ExpectedCodeSigningThumbprint = "82AE2517BFD53C5047554952C3FEFF540DD08383";
+
     /// <summary>C:\Program Files\MyNetworkTool</summary>
     public static string InstallDir =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), AppName);
