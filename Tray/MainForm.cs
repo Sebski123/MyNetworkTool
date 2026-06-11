@@ -56,7 +56,7 @@ public sealed class MainForm : Form
 
     public MainForm()
     {
-        Text = $"MyNetworkTool v{Application.ProductVersion.Substring(0, Application.ProductVersion.IndexOf('+'))}";
+        Text = $"MyNetworkTool v{ProductVersionShort()}";
         Icon = AppIcon.Load(SystemInformation.IconSize);   // custom title-bar / taskbar icon
         ClientSize = new Size(560, 745);
         StartPosition = FormStartPosition.CenterScreen;
@@ -537,6 +537,19 @@ public sealed class MainForm : Form
         sb.AppendLine($"Profile:  {(string.IsNullOrEmpty(d.ProfileName) ? "(not connected)" : $"{d.ProfileName} ({d.ProfileCategory})")}");
 
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// The product version without the build-metadata suffix. <see cref="Application.ProductVersion"/>
+    /// is the informational version, which is "1.2.7+&lt;commit-sha&gt;" for a normal git build but can
+    /// be just "1.2.7" when built without source-revision metadata — so trim at '+' only when present
+    /// rather than assuming it (which threw an out-of-range exception on a metadata-less build).
+    /// </summary>
+    private static string ProductVersionShort()
+    {
+        string version = Application.ProductVersion;
+        int plus = version.IndexOf('+');
+        return plus >= 0 ? version[..plus] : version;
     }
 
     /// <summary>Converts a CIDR prefix length (0..32) to a dotted IPv4 subnet mask.</summary>
