@@ -246,6 +246,32 @@ public static class Installer
         }
     }
 
+    /// <summary>
+    /// Non-interactive update probe used by tray mode at startup. Returns true only when a newer
+    /// release exists and includes a usable download asset. No prompts are shown.
+    /// </summary>
+    public static bool TryGetAvailableGitHubUpdate(out string tagName, out string releaseUrl)
+    {
+        tagName = string.Empty;
+        releaseUrl = string.Empty;
+
+        try
+        {
+            if (!TryGetGitHubUpdate(out var update))
+            {
+                return false;
+            }
+
+            tagName = update.TagName;
+            releaseUrl = update.ReleaseUrl;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     /// <summary>Re-launches this exe elevated with the "install" argument.</summary>
     public static int RelaunchElevatedInstall() => RelaunchElevated("install");
 

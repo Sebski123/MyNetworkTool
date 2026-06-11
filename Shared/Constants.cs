@@ -58,4 +58,11 @@ public static class Constants
 
     /// <summary>Optional override file for proxy presets. If absent, built-in presets are used.</summary>
     public static string PresetsConfigPath => Path.Combine(DataDir, "presets.json");
+
+    /// <summary>
+    /// Per-user marker used by tray mode to throttle background update checks at logon.
+    /// Stored under LocalAppData because it is UX state, not shared service configuration.
+    /// </summary>
+    public static string TrayUpdateCheckMarkerPath =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), AppName, "last-update-check-utc.txt");
 }
