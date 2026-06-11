@@ -8,6 +8,7 @@ using System.Security.Principal;
 using System.ComponentModel;
 using System.Text.Json;
 using System.Windows.Forms;
+using System.Threading.Tasks;
 using Microsoft.Win32;
 using NetworkingTool.Shared;
 
@@ -272,6 +273,67 @@ public static class Installer
         }
     }
 
+    /// <summary>
+    /// Performs update install work from the already elevated service process without showing any
+    /// UI or triggering UAC. Intended for IPC-triggered service updates only.
+    /// </summary>
+    public static bool TryInstallLatestUpdateFromService(out string message)
+    {
+        message = string.Empty;
+
+        try
+        {
+            if (!TryGetGitHubUpdate(out var update))
+            {
+                message = "No update is currently available.";
+                return false;
+            }
+
+            string updateDir = Path.Combine(
+                Path.GetTempPath(),
+                "MyNetworkTool",
+                "service-updates",
+                Guid.NewGuid().ToString("N"));
+            string downloadedExe = Path.Combine(updateDir, Constants.ExeFileName);
+            Directory.CreateDirectory(updateDir);
+
+            try
+            {
+                if (File.Exists(update.DownloadUrl))
+                {
+                    File.Copy(update.DownloadUrl, downloadedExe, overwrite: true);
+                }
+                else if (!DownloadFileNoUi(update.DownloadUrl, downloadedExe, out string downloadError))
+                {
+                    message = "Update download failed: " + downloadError;
+                    return false;
+                }
+
+                if (!ReplaceInstalledExecutable(downloadedExe, out string replaceError))
+                {
+                    message = "Update install failed: " + replaceError;
+                    return false;
+                }
+
+                message = "Update installed successfully. The tray will restart on the new version.";
+                return true;
+            }
+            finally
+            {
+                try { Directory.Delete(updateDir, recursive: true); } catch { }
+            }
+        }
+        catch (Exception ex)
+        {
+            message = ex.Message;
+            return false;
+        }
+    }
+
+    /// <summary>Shows the update-available dialog for a known tag and release link.</summary>
+    public static bool PromptForGitHubUpdate(string tagName, string releaseUrl)
+        => PromptForGitHubUpdate(new GitHubUpdateInfo(tagName, releaseUrl, releaseUrl));
+
     /// <summary>Re-launches this exe elevated with the "install" argument.</summary>
     public static int RelaunchElevatedInstall() => RelaunchElevated("install");
 
@@ -530,6 +592,61 @@ public static class Installer
         finally
         {
             try { Directory.Delete(updateDir, recursive: true); } catch { }
+        }
+    }
+
+    private static bool DownloadFileNoUi(string downloadUrl, string destinationPath, out string error)
+    {
+        error = string.Empty;
+
+        try
+        {
+            using var client = new HttpClient { Timeout = System.Threading.Timeout.InfiniteTimeSpan };
+            using HttpResponseMessage response = client.Send(
+                new HttpRequestMessage(HttpMethod.Get, downloadUrl),
+                HttpCompletionOption.ResponseHeadersRead);
+            response.EnsureSuccessStatusCode();
+
+            using Stream source = response.Content.ReadAsStream();
+            using FileStream target = File.Create(destinationPath);
+            source.CopyTo(target);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            return false;
+        }
+    }
+
+    private static bool ReplaceInstalledExecutable(string sourcePath, out string error)
+    {
+        error = string.Empty;
+
+        try
+        {
+            Directory.CreateDirectory(Constants.InstallDir);
+
+            try
+            {
+                File.Copy(sourcePath, Constants.InstalledExePath, overwrite: true);
+                return true;
+            }
+            catch
+            {
+                // The installed image is likely in use by service/tray. Rename the old file out of
+                // the way and place the new image at the canonical path.
+                string oldExePath = Constants.InstalledExePath + ".old." + Guid.NewGuid().ToString("N");
+                File.Move(Constants.InstalledExePath, oldExePath);
+                File.Copy(sourcePath, Constants.InstalledExePath, overwrite: false);
+                MoveFileEx(oldExePath, null, MOVEFILE_DELAY_UNTIL_REBOOT);
+                return true;
+            }
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            return false;
         }
     }
 

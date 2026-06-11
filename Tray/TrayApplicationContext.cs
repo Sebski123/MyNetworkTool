@@ -121,10 +121,17 @@ public sealed class TrayApplicationContext : ApplicationContext
         try
         {
             // Check for an update on a background thread so the UI thread stays responsive.
-            bool updateAvailable = await Task.Run(() =>
-                Installer.TryGetAvailableGitHubUpdate(out _, out _));
+            var update = await Task.Run(() =>
+            {
+                if (Installer.TryGetAvailableGitHubUpdate(out string tagName, out string releaseUrl))
+                {
+                    return (Available: true, TagName: tagName, ReleaseUrl: releaseUrl);
+                }
 
-            if (!updateAvailable)
+                return (Available: false, TagName: string.Empty, ReleaseUrl: string.Empty);
+            });
+
+            if (!update.Available)
             {
                 _notifyIcon.BalloonTipTitle = "MyNetworkTool";
                 _notifyIcon.BalloonTipText = "You're up to date.";
@@ -133,10 +140,46 @@ public sealed class TrayApplicationContext : ApplicationContext
                 return;
             }
 
-            // Run the interactive flow (prompt + download + install) on a background thread.
-            bool installed = await Task.Run(Installer.TryUpdateFromGitHubRelease);
-            if (!installed)
+            // Compatibility bridge: older installed services do not understand the
+            // InstallLatestUpdate action yet. Detect support before sending it.
+            IpcResponse ping = await PipeClient.SendAsync(new IpcRequest { Action = IpcAction.Ping });
+            bool supportsServiceUpdater = ping.Success &&
+                ping.Message.Contains("protocol=2", StringComparison.OrdinalIgnoreCase);
+
+            if (!supportsServiceUpdater)
             {
+                // One-time fallback path for pre-protocol=2 installs. This path still relies on
+                // UAC, but once the install is upgraded the service-driven updater is used.
+                bool upgraded = await Task.Run(Installer.TryUpdateFromGitHubRelease);
+                if (!upgraded)
+                {
+                    return;
+                }
+
+                Installer.StopOtherTrayInstances();
+                if (Installer.LaunchInstalledTray())
+                {
+                    ExitApp();
+                }
+                return;
+            }
+
+            if (!Installer.PromptForGitHubUpdate(update.TagName, update.ReleaseUrl))
+            {
+                return;
+            }
+
+            IpcResponse response = await PipeClient.SendAsync(new IpcRequest
+            {
+                Action = IpcAction.InstallLatestUpdate,
+            });
+
+            if (!response.Success)
+            {
+                _notifyIcon.BalloonTipTitle = "Update failed";
+                _notifyIcon.BalloonTipText = response.Message;
+                _notifyIcon.BalloonTipIcon = ToolTipIcon.Error;
+                _notifyIcon.ShowBalloonTip(8_000);
                 return;
             }
 
@@ -144,6 +187,13 @@ public sealed class TrayApplicationContext : ApplicationContext
             if (Installer.LaunchInstalledTray())
             {
                 ExitApp();
+            }
+            else
+            {
+                _notifyIcon.BalloonTipTitle = "Update installed";
+                _notifyIcon.BalloonTipText = "Please reopen MyNetworkTool.";
+                _notifyIcon.BalloonTipIcon = ToolTipIcon.Info;
+                _notifyIcon.ShowBalloonTip(6_000);
             }
         }
         finally

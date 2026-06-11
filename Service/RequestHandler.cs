@@ -20,7 +20,7 @@ public static class RequestHandler
             switch (req.Action)
             {
                 case IpcAction.Ping:
-                    response = IpcResponse.Ok("MyNetworkTool service is running.");
+                    response = IpcResponse.Ok("MyNetworkTool service is running. protocol=2");
                     break;
 
                 case IpcAction.ListAdapters:
@@ -77,6 +77,10 @@ public static class RequestHandler
 
                 case IpcAction.ResetProxy:
                     response = ProxyOperations.Reset(req.ProxyScope);
+                    break;
+
+                case IpcAction.InstallLatestUpdate:
+                    response = UpdateOperations.InstallLatestUpdate();
                     break;
 
                 default:

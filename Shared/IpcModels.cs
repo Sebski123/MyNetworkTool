@@ -27,7 +27,12 @@ public enum IpcAction
     /// <summary>Administratively enable or disable an adapter (see <see cref="IpcRequest.Enable"/>).</summary>
     SetAdapterEnabled,
     SetProxyPreset,
-    ResetProxy
+    ResetProxy,
+    /// <summary>
+    /// Privileged operation: the service downloads and installs the latest release into the
+    /// Program Files location.
+    /// </summary>
+    InstallLatestUpdate
 }
 
 /// <summary>

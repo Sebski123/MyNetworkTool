@@ -52,34 +52,8 @@ internal static class Program
         // throws if a Form has already been instantiated, so this must come first.
         TrayEntry.EnsureInitialized();
 
-        if (Installer.TryUpdateFromGitHubRelease())
-        {
-            Installer.StopOtherTrayInstances();
-            if (Installer.LaunchInstalledTray())
-            {
-                return 0;
-            }
-        }
-
         if (Installer.IsServiceInstalled())
         {
-            // Launching a newer build over an older install auto-updates the installed copy (one
-            // UAC elevation). On a successful update, restart the tray so the freshly installed
-            // version is what runs: stop any stale (old-version) tray that is still up, then launch
-            // the updated tray. The logon auto-start runs "tray" mode (not this path) and running
-            // the installed copy itself is excluded inside IsUpdateAvailable, so neither re-triggers
-            // an update.
-            if (Installer.IsUpdateAvailable() && Installer.RelaunchElevatedInstall() == 0)
-            {
-                Installer.StopOtherTrayInstances();
-                if (Installer.LaunchInstalledTray())
-                {
-                    return 0;
-                }
-                // Could not launch the installed copy — fall back to this build's tray in-process
-                // (the stale tray is already stopped, so the single-instance slot is free).
-            }
-
             return TrayEntry.Run();
         }
 
