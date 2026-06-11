@@ -20,6 +20,7 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly NotifyIcon _notifyIcon;
     private readonly Icon _trayIcon;
     private readonly System.Windows.Forms.Timer _startupUpdateTimer;
+    private bool _updateFlowRunning;
     private MainForm? _mainForm;
 
     public TrayApplicationContext()
@@ -29,6 +30,7 @@ public sealed class TrayApplicationContext : ApplicationContext
 
         var menu = new ContextMenuStrip();
         menu.Items.Add("Open", null, (s, e) => ShowMainForm());
+        menu.Items.Add("Check for updates...", null, async (s, e) => await StartInteractiveUpdateFlowAsync());
         menu.Items.Add("Exit", null, (s, e) => ExitApp());
 
         _notifyIcon = new NotifyIcon
@@ -39,6 +41,7 @@ public sealed class TrayApplicationContext : ApplicationContext
             ContextMenuStrip = menu
         };
         _notifyIcon.DoubleClick += (s, e) => ShowMainForm();
+        _notifyIcon.BalloonTipClicked += async (s, e) => await StartInteractiveUpdateFlowAsync();
 
         // Run a delayed, non-interactive update probe so logon startup stays quiet and responsive.
         _startupUpdateTimer = new System.Windows.Forms.Timer { Interval = 30_000 };
@@ -102,9 +105,51 @@ public sealed class TrayApplicationContext : ApplicationContext
         }
 
         _notifyIcon.BalloonTipTitle = "MyNetworkTool update available";
-        _notifyIcon.BalloonTipText = "New version " + update.TagName + " is available. Launch MyNetworkTool manually to install.";
+        _notifyIcon.BalloonTipText = "New version " + update.TagName + " is available. Click here to install.";
         _notifyIcon.BalloonTipIcon = ToolTipIcon.Info;
         _notifyIcon.ShowBalloonTip(10_000);
+    }
+
+    private async Task StartInteractiveUpdateFlowAsync()
+    {
+        if (_updateFlowRunning)
+        {
+            return;
+        }
+
+        _updateFlowRunning = true;
+        try
+        {
+            // Check for an update on a background thread so the UI thread stays responsive.
+            bool updateAvailable = await Task.Run(() =>
+                Installer.TryGetAvailableGitHubUpdate(out _, out _));
+
+            if (!updateAvailable)
+            {
+                _notifyIcon.BalloonTipTitle = "MyNetworkTool";
+                _notifyIcon.BalloonTipText = "You're up to date.";
+                _notifyIcon.BalloonTipIcon = ToolTipIcon.Info;
+                _notifyIcon.ShowBalloonTip(5_000);
+                return;
+            }
+
+            // Run the interactive flow (prompt + download + install) on a background thread.
+            bool installed = await Task.Run(Installer.TryUpdateFromGitHubRelease);
+            if (!installed)
+            {
+                return;
+            }
+
+            Installer.StopOtherTrayInstances();
+            if (Installer.LaunchInstalledTray())
+            {
+                ExitApp();
+            }
+        }
+        finally
+        {
+            _updateFlowRunning = false;
+        }
     }
 
     private static bool ShouldRunStartupUpdateCheckNow()
