@@ -157,17 +157,18 @@ public static class NetworkOperations
         try
         {
             var adapter = AdapterService.ResolveByIdOrThrow(interfaceId);
-            string name = adapter.Name;
-            if (string.IsNullOrEmpty(name))
+            int idx = adapter.InterfaceIndex;
+            if (idx <= 0)
             {
                 return IpcResponse.Fail(
-                    $"Could not determine a valid name for adapter '{adapter.Name}'.");
+                    $"Could not determine a valid interface index for adapter '{adapter.Name}'.");
             }
 
-            // Only the validated adapter name is embedded in the script.
-            string command = enable
-                ? $"Enable-NetAdapter -Name \"{adapter.Name}\" -Confirm:$false; "
-                : $"Disable-NetAdapter -Name \"{adapter.Name}\" -Confirm:$false; ";
+            // Embed ONLY the integer interface index (never the free-form adapter name, which Windows
+            // lets an admin rename to arbitrary text and would otherwise be a script-injection sink).
+            // Enable/Disable-NetAdapter take no -InterfaceIndex, so resolve by index via the pipeline.
+            string verb = enable ? "Enable-NetAdapter" : "Disable-NetAdapter";
+            string command = $"Get-NetAdapter -InterfaceIndex {idx} | {verb} -Confirm:$false; ";
 
             var (exitCode, stdout, stderr) = PowerShellRunner.Run(PowerShellRunner.Wrap(command));
             if (exitCode == 0)
