@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using NetworkingTool.Shared;
 
 namespace NetworkingTool.Service;
@@ -42,14 +44,26 @@ public static class ProxyOperations
         {
             if (File.Exists(Constants.PresetsConfigPath))
             {
-                string json = File.ReadAllText(Constants.PresetsConfigPath);
-                var fromConfig = IpcJson.Deserialize<ProxyPresetInfo[]>(json);
-                if (fromConfig is not null)
+                // Defense in depth: only trust the override file if it is owned by SYSTEM or
+                // Administrators. The install-time ACL hardening already prevents a standard user
+                // from creating it, but a file planted before that (or via any ACL gap) would be
+                // owned by its non-privileged creator — ignore it so it cannot redirect the
+                // machine-wide proxy.
+                if (!IsTrustedConfigOwner(Constants.PresetsConfigPath))
                 {
-                    foreach (var preset in fromConfig)
+                    ServiceLog.Write("Ignoring presets.json: not owned by SYSTEM/Administrators.");
+                }
+                else
+                {
+                    string json = File.ReadAllText(Constants.PresetsConfigPath);
+                    var fromConfig = IpcJson.Deserialize<ProxyPresetInfo[]>(json);
+                    if (fromConfig is not null)
                     {
-                        if (preset is null || string.IsNullOrWhiteSpace(preset.Name)) continue;
-                        merged[preset.Name] = preset; // config overrides built-ins by name
+                        foreach (var preset in fromConfig)
+                        {
+                            if (preset is null || string.IsNullOrWhiteSpace(preset.Name)) continue;
+                            merged[preset.Name] = preset; // config overrides built-ins by name
+                        }
                     }
                 }
             }
@@ -63,6 +77,28 @@ public static class ProxyOperations
         var result = new ProxyPresetInfo[merged.Count];
         merged.Values.CopyTo(result, 0);
         return result;
+    }
+
+    /// <summary>
+    /// True only if the file's owner is the LocalSystem account or the built-in Administrators
+    /// group — the two principals the install-time ACL allows to write the data directory. Any
+    /// other owner (e.g. a standard user who managed to create the file) is untrusted.
+    /// </summary>
+    private static bool IsTrustedConfigOwner(string path)
+    {
+        try
+        {
+            var owner = new FileInfo(path).GetAccessControl().GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier;
+            if (owner is null) return false;
+
+            return owner.IsWellKnown(WellKnownSidType.LocalSystemSid)
+                || owner.IsWellKnown(WellKnownSidType.BuiltinAdministratorsSid);
+        }
+        catch
+        {
+            // If ownership cannot be read, treat the file as untrusted.
+            return false;
+        }
     }
 
     public static IpcResponse SetPreset(string? presetName, string? scope)
