@@ -158,17 +158,20 @@ public sealed class PipeServerWorker : BackgroundService
     /// <summary>
     /// Creates a fresh secured named-pipe server stream.
     ///
-    /// The service runs as LocalSystem. Granting Authenticated Users ReadWrite is the whole point of
-    /// the tool: it lets the unelevated tray application talk to the elevated service to apply
-    /// validated changes without per-change UAC prompts. Administrators and LocalSystem get full
+    /// The service runs as LocalSystem. We grant the local INTERACTIVE logon group (S-1-5-4)
+    /// ReadWrite — NOT Authenticated Users. The Interactive SID is present in the token of a user
+    /// logged on at the console or over RDP (so the unelevated tray can talk to the elevated service
+    /// without per-change UAC prompts), but it is NOT present in a token created by a network (SMB)
+    /// logon. A remote caller reaching the pipe over \\host\pipe\MyNetworkTool is therefore denied,
+    /// which keeps this privileged interface local-only. Administrators and LocalSystem get full
     /// control for management.
     /// </summary>
     private static NamedPipeServerStream CreateServerStream()
     {
         var security = new PipeSecurity();
 
-        var authUsers = new SecurityIdentifier(WellKnownSidType.AuthenticatedUserSid, null);
-        security.AddAccessRule(new PipeAccessRule(authUsers, PipeAccessRights.ReadWrite, AccessControlType.Allow));
+        var interactive = new SecurityIdentifier(WellKnownSidType.InteractiveSid, null);
+        security.AddAccessRule(new PipeAccessRule(interactive, PipeAccessRights.ReadWrite, AccessControlType.Allow));
 
         var admins = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
         security.AddAccessRule(new PipeAccessRule(admins, PipeAccessRights.FullControl, AccessControlType.Allow));
