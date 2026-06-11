@@ -47,6 +47,11 @@ internal static class Program
     /// <summary>No-argument launch: route to the tray if installed, otherwise guide the user to install.</summary>
     private static int DefaultLaunch()
     {
+        // Initialize WinForms before any Form (update prompt, install prompt, etc.) is created.
+        // ApplicationConfiguration.Initialize() calls SetCompatibleTextRenderingDefault, which
+        // throws if a Form has already been instantiated, so this must come first.
+        TrayEntry.EnsureInitialized();
+
         if (Installer.TryUpdateFromGitHubRelease())
         {
             Installer.StopOtherTrayInstances();

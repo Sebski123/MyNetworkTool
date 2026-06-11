@@ -12,6 +12,22 @@ namespace NetworkingTool.Tray;
 /// </summary>
 public static class TrayEntry
 {
+    private static bool _winFormsInitialized;
+
+    /// <summary>
+    /// Initializes WinForms application settings (high-DPI mode, visual styles, text rendering).
+    /// Must be called before the first <see cref="System.Windows.Forms.Form"/> is created.
+    /// Safe to call multiple times — subsequent calls are no-ops.
+    /// </summary>
+    public static void EnsureInitialized()
+    {
+        if (!_winFormsInitialized)
+        {
+            ApplicationConfiguration.Initialize();   // source-generated; available because UseWindowsForms=true
+            _winFormsInitialized = true;
+        }
+    }
+
     public static int Run()
     {
         // Enforce a single tray instance per session. Holding the mutex for the lifetime of the
@@ -24,7 +40,7 @@ public static class TrayEntry
             return 0;
         }
 
-        ApplicationConfiguration.Initialize();   // source-generated; available because UseWindowsForms=true
+        EnsureInitialized();
         Application.Run(new TrayApplicationContext());
         return 0;
     }
