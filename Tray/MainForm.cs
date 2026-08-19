@@ -16,6 +16,8 @@ namespace NetworkingTool.Tray;
 /// </summary>
 public sealed class MainForm : Form
 {
+    private static readonly TimeSpan ProxyStatusRefreshInterval = TimeSpan.FromSeconds(30);
+
     private readonly ComboBox _adapters = new();
     private readonly Button _refresh = new();
     private readonly CheckBox _physicalOnly = new();
@@ -54,6 +56,10 @@ public sealed class MainForm : Form
     // triggered by the background prewarm at startup or by the window being shown.
     private bool _initialLoadStarted;
 
+    // Periodically refreshes the proxy status text so changes made outside this UI are reflected.
+    private readonly System.Windows.Forms.Timer _proxyStatusRefreshTimer = new();
+    private bool _proxyStatusRefreshInFlight;
+
     public MainForm()
     {
         Text = $"MyNetworkTool v{ProductVersionShort()}";
@@ -65,6 +71,10 @@ public sealed class MainForm : Form
         MaximizeBox = false;
 
         BuildControls();
+
+        _proxyStatusRefreshTimer.Interval = (int)ProxyStatusRefreshInterval.TotalMilliseconds;
+        _proxyStatusRefreshTimer.Tick += OnProxyStatusRefreshTick;
+        _proxyStatusRefreshTimer.Start();
     }
 
     /// <summary>
@@ -453,18 +463,48 @@ public sealed class MainForm : Form
 
     private Task RefreshProxyStatusAsync() => RunBusyAsync("Reading proxy status…", async () =>
     {
+        await RefreshProxyStatusCoreAsync(logResponse: true);
+    });
+
+    private async Task RefreshProxyStatusCoreAsync(bool logResponse)
+    {
         try
         {
             IpcResponse response = await PipeClient.SendAsync(new IpcRequest { Action = IpcAction.GetProxyStatus });
             _proxyStatus.Text = response.Success ? response.Message : "Could not read proxy status: " + response.Message;
-            AppendLog(response);
+            if (logResponse)
+            {
+                AppendLog(response);
+            }
         }
         catch (Exception ex)
         {
             _proxyStatus.Text = "Could not read proxy status: " + ex.Message;
-            AppendLog(IpcResponse.Fail("Refresh proxy status failed: " + ex.Message));
+            if (logResponse)
+            {
+                AppendLog(IpcResponse.Fail("Refresh proxy status failed: " + ex.Message));
+            }
         }
-    });
+    }
+
+    private async void OnProxyStatusRefreshTick(object? sender, EventArgs e)
+    {
+        // Keep periodic refresh unobtrusive: do not overlap requests or interrupt active actions.
+        if (_proxyStatusRefreshInFlight || _busyCount > 0)
+        {
+            return;
+        }
+
+        _proxyStatusRefreshInFlight = true;
+        try
+        {
+            await RefreshProxyStatusCoreAsync(logResponse: false);
+        }
+        finally
+        {
+            _proxyStatusRefreshInFlight = false;
+        }
+    }
 
     // ---------------------------------------------------------------------
     // Adapter selection: show live state + set the enable/disable toggle
@@ -784,5 +824,15 @@ public sealed class MainForm : Form
         }
 
         _output.AppendText(line + Environment.NewLine);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _proxyStatusRefreshTimer.Dispose();
+        }
+
+        base.Dispose(disposing);
     }
 }
