@@ -521,7 +521,7 @@ public sealed class MainForm : Form
 
         // The toggle's meaning is derived from the adapter's current status, which we already have
         // from the list — "Disabled" means the only sensible action is to enable it again.
-        bool isDisabled = string.Equals(a.Status, "Disabled", StringComparison.OrdinalIgnoreCase);
+        bool isDisabled = string.Equals(a.Status, "Disabled", StringComparison.OrdinalIgnoreCase) || string.Equals(a.Status, "Not Present", StringComparison.OrdinalIgnoreCase);
         _toggleAdapter.Text = isDisabled ? "Enable adapter" : "Disable adapter";
         _toggleAdapter.Enabled = true;
 
@@ -610,7 +610,7 @@ public sealed class MainForm : Form
 
         // Enable a disabled adapter; otherwise disable it (after confirmation, since disabling can
         // drop the connection the user is relying on).
-        bool enable = string.Equals(a.Status, "Disabled", StringComparison.OrdinalIgnoreCase);
+        bool enable = string.Equals(a.Status, "Disabled", StringComparison.OrdinalIgnoreCase) || string.Equals(a.Status, "Not Present", StringComparison.OrdinalIgnoreCase);
         if (!enable)
         {
             DialogResult confirm = MessageBox.Show(
